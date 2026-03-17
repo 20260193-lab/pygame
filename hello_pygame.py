@@ -49,7 +49,7 @@ while running:
     state["spawn_timer"] += dt
     state["rect_spawn_timer"] += dt
 
-    # 👉 난이도 증가 계수
+    # 👉 난이도 증가
     difficulty = 1 + state["time_alive"] * 0.0005
 
     if not state["game_over"]:
@@ -85,19 +85,23 @@ while running:
         state["x"] = max(30, min(800 - 30, state["x"]))
         state["y"] = max(30, min(600 - 30, state["y"]))
 
-        # 🔴 원 생성 (점점 많아짐 + 커짐)
+        # 🔴 원 생성 (크기 제한 + 난이도 반영)
         spawn_delay = max(300, 800 - state["time_alive"] * 0.1)
 
         if state["spawn_timer"] > spawn_delay:
             state["spawn_timer"] = 0
+
+            max_r = min(200, int(150 + state["time_alive"] * 0.05))
+
             state["circles"].append({
                 "x": random.randint(0, 800),
                 "y": random.randint(0, 600),
                 "time": 0,
-                "max_radius": random.randint(60, int(150 + state["time_alive"] * 0.05))
+                "max_radius": random.randint(60, max_r),
+                "expand_time": None
             })
 
-        # 🟦 사각형 생성 (속도 증가)
+        # 🟦 사각형 생성
         if state["rect_spawn_timer"] > 1200:
             state["rect_spawn_timer"] = 0
             side = random.choice(["top", "bottom", "left", "right"])
@@ -134,13 +138,20 @@ while running:
         c["time"] += dt
         t = c["time"]
 
-        if t < 2000:
-            progress = t / 2000
+        # 👉 expand_time 계산 (크기 기반)
+        if c["expand_time"] is None:
+            c["expand_time"] = max(500, 2000 - c["max_radius"] * 3)
+
+        expand_time = c["expand_time"]
+
+        if t < expand_time:
+            progress = t / expand_time
             radius = int(c["max_radius"] * (progress ** 0.3))
             alpha = 255
-        elif t < 2500:
+
+        elif t < expand_time + 500:
             radius = c["max_radius"]
-            alpha = int(255 * (1 - (t - 2000) / 500))
+            alpha = int(255 * (1 - (t - expand_time) / 500))
         else:
             continue
 
@@ -148,13 +159,14 @@ while running:
         pygame.draw.circle(surf, (255, 0, 0, alpha), (radius, radius), radius, width=4)
         screen.blit(surf, (c["x"] - radius, c["y"] - radius))
 
+        # 충돌 체크
         if not state["game_over"]:
             dist = math.hypot(state["x"] - c["x"], state["y"] - c["y"])
-            if dist < radius and t < 2000:
+            if dist < radius and t < expand_time:
                 state["hit_count"] += 1
                 state["player_alpha"] = max(0, state["player_alpha"] - 85)
                 state["shake_timer"] = 300
-                c["time"] = 2500
+                c["time"] = expand_time + 500
 
                 if state["hit_count"] >= 3:
                     state["game_over"] = True
@@ -219,7 +231,7 @@ while running:
     fps = clock.get_fps()
     screen.blit(font.render(f"FPS: {int(fps)}", True, BLACK), (10, 10))
 
-    # 점수 + 👑
+    # 점수
     score_display = f"Score: {int(state['score'])}"
     if state["game_over"] and state["new_record"]:
         score_display += " 👑"
