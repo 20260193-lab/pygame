@@ -3,6 +3,24 @@ import random
 import sys
 from pygame.math import Vector2
 
+import base64, io
+
+def load_base64_image(b64_string):
+    image_data = base64.b64decode(b64_string)
+    image_file = io.BytesIO(image_data)
+    return pygame.image.load(image_file).convert_alpha()
+
+def slice_sheet(sheet, frame_w, frame_h, cols):
+    frames = []
+    total = (sheet.get_width() // frame_w) * (sheet.get_height() // frame_h)
+    
+    for i in range(total):
+        row, col = divmod(i, cols)
+        rect = pygame.Rect(col * frame_w, row * frame_h, frame_w, frame_h)
+        frames.append(sheet.subsurface(rect))
+    
+    return frames
+
 pygame.init()
 
 def get_korean_font(size):
@@ -25,11 +43,13 @@ ARENA_W, ARENA_H = 300, 300
 # 전역 변수로 관리하여 클래스들 사이에서 공유
 ARENA_RECT = pygame.Rect((WIDTH - ARENA_W) // 2, (HEIGHT - ARENA_H) // 2, ARENA_W, ARENA_H)
 
+SHEET_B64 = "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"
+
 # 1~10라운드의 난이도를 자동으로 계산하여 생성합니다.
 LEVELS = [
     {
-        "min_speed": 150 + (i * 20),
-        "max_speed": 250 + (i * 30),
+        "min_speed": 100 + (i * 20),
+        "max_speed": 350 + (i * 40),
         "spawn_rate": max(0.08, 0.5 - (i * 0.04)), 
         "target_score": (i + 1) * 100,
         "label": f"Round {i + 1}"
@@ -40,30 +60,105 @@ LEVELS = [
 class Player(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
-        self.image = pygame.Surface((20, 20))
-        self.image.fill(BLUE)
+
+        # --- 스프라이트 로드 ---
+        sheet = load_base64_image(SHEET_B64)
+
+        frames = slice_sheet(sheet, 32, 32, 4)
+
+        self.animations = {
+            "down_idle": [frames[0], frames[1]],
+            "down_run": [frames[12], frames[13], frames[14], frames[15]],
+    
+            "up_idle": [frames[8], frames[9]],
+            "up_run": [frames[20], frames[21], frames[22], frames[23]],
+    
+            "right_idle": [frames[4], frames[5]],
+            "right_run": [frames[16], frames[17], frames[18], frames[19]],
+        }
+        self.direction = "down"
+        self.moving = False
+
+        self.image = self.animations["down_idle"][0]
         self.rect = self.image.get_rect(center=ARENA_RECT.center)
+
         self.pos = Vector2(self.rect.center)
-        self.speed = 300 
+        self.speed = 300
+
+        self.anim_timer = 0
+        self.anim_frame = 0
+        
+        self.current_state = "down_idle"
 
     def update(self, dt):
         keys = pygame.key.get_pressed()
         move = Vector2(0, 0)
-        
-        if keys[pygame.K_LEFT]:  move.x = -1
-        if keys[pygame.K_RIGHT]: move.x = 1
-        if keys[pygame.K_UP]:    move.y = -1
-        if keys[pygame.K_DOWN]:  move.y = 1
 
-        if move.length() > 0:
+        if keys[pygame.K_LEFT]:
+            move.x = -1
+            self.direction = "left"
+        if keys[pygame.K_RIGHT]:
+            move.x = 1
+            self.direction = "right"
+        if keys[pygame.K_UP]:
+            move.y = -1
+            self.direction = "up"
+        if keys[pygame.K_DOWN]:
+            move.y = 1
+            self.direction = "down"
+
+        self.moving = move.length() > 0
+
+        if self.moving:
             move = move.normalize()
-            
+
         self.pos += move * self.speed * dt
-        
+
         self.rect.center = (round(self.pos.x), round(self.pos.y))
-        # 줄어든 아레나 크기에 맞춰서 플레이어가 밖으로 나가지 못하게 제한
         self.rect.clamp_ip(ARENA_RECT)
         self.pos = Vector2(self.rect.center)
+
+        self.update_sprite(dt)
+
+    def update_sprite(self, dt):
+        state = "run" if self.moving else "idle"
+
+        direction = self.direction
+        flip = False
+
+        if direction == "left":
+            direction = "right"
+            flip = True
+            
+        new_state = f"{direction}_{state}"
+
+        if new_state != self.current_state:
+            self.current_state = new_state
+            self.anim_frame = 0    
+
+        frames = self.animations[f"{direction}_{state}"]
+        
+        self.anim_frame %= len(frames)
+
+        # 애니메이션
+        self.anim_timer += dt
+        if self.anim_timer > 0.15:
+            self.anim_timer = 0
+            self.anim_frame = (self.anim_frame + 1) % len(frames)
+
+        image = frames[self.anim_frame]
+
+        if flip:
+            image = pygame.transform.flip(image, True, False)
+            
+        scale = 2  # 👉 원하는 크기 (1=원본, 2=2배, 3=3배)
+
+        image = pygame.transform.scale(
+            image,
+            (image.get_width() * scale, image.get_height() * scale)
+        )
+
+        self.image = image
 
 class Enemy(pygame.sprite.Sprite):
     def __init__(self, level_cfg):
