@@ -22,6 +22,7 @@ def slice_sheet(sheet, frame_w, frame_h, cols):
     return frames
 
 pygame.init()
+pygame.mixer.init()
 
 def get_korean_font(size):
     # 한글 폰트 후보군 (윈도우, 맥, 나눔고딕 등)
@@ -82,6 +83,10 @@ class Player(pygame.sprite.Sprite):
         self.image = self.animations["down_idle"][0]
         self.rect = self.image.get_rect(center=ARENA_RECT.center)
 
+        # 👉 충돌용 hitbox (작게 설정)
+        self.hitbox = pygame.Rect(0, 0, 20, 20)
+        self.hitbox.center = self.rect.center
+
         self.pos = Vector2(self.rect.center)
         self.speed = 300
 
@@ -114,9 +119,15 @@ class Player(pygame.sprite.Sprite):
 
         self.pos += move * self.speed * dt
 
-        self.rect.center = (round(self.pos.x), round(self.pos.y))
-        self.rect.clamp_ip(ARENA_RECT)
-        self.pos = Vector2(self.rect.center)
+        # 👉 hitbox 기준 이동
+        self.hitbox.center = (round(self.pos.x), round(self.pos.y))
+        self.hitbox.clamp_ip(ARENA_RECT)
+
+        # 👉 rect는 hitbox 따라가게
+        self.rect.center = self.hitbox.center
+
+        # 👉 pos도 hitbox 기준으로 다시 맞춤
+        self.pos = Vector2(self.hitbox.center)
 
         self.update_sprite(dt)
 
@@ -158,11 +169,16 @@ class Player(pygame.sprite.Sprite):
             (image.get_width() * scale, image.get_height() * scale)
         )
 
+        center = self.rect.center   # 기존 위치 저장
         self.image = image
+        self.rect = self.image.get_rect(center=center)  # 새 크기에 맞게 rect 재설정
 
 class Enemy(pygame.sprite.Sprite):
     def __init__(self, level_cfg):
         super().__init__()
+
+        self.damage = 5
+
         radius = 6 # 장애물 크기를 작게 통일
         
         # 배경이 투명한 원형 장애물 생성
@@ -199,6 +215,10 @@ class Enemy(pygame.sprite.Sprite):
 
 class Game:
     def __init__(self):
+
+        import os
+        print(os.listdir("sounds"))
+
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("R10unds")
         self.clock = pygame.time.Clock()
@@ -211,22 +231,44 @@ class Game:
         self.all_sprites = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
 
+        # 🔥 --- 사운드 추가 ---
+        pygame.mixer.music.load("./sounds/bgm.mp3")
+        pygame.mixer.music.set_volume(0.5)
+
+        self.hit_sound = pygame.mixer.Sound("./sounds/hit.wav")
+        self.clear_sound = pygame.mixer.Sound("./sounds/clear.mp3")
+        self.gameover_sound = pygame.mixer.Sound("./sounds/gameover.mp3")
+
+        self.hit_sound.set_volume(0.7)
+
+        self.shake_timer = 0
+        self.shake_strength = 0
+
     def reset_game(self):
+
+        pygame.mixer.stop()   # 🔥 모든 효과음 정지
+        pygame.mixer.music.stop()  # 🔥 BGM도 혹시 모르니 정지
+
         # 게임 재시작 시 아레나 크기를 원래대로(300x300) 복구합니다.
         ARENA_RECT.size = (300, 300)
         ARENA_RECT.center = (WIDTH // 2, HEIGHT // 2)
+
+        pygame.mixer.music.play(-1)  # 🔥 게임 시작 시 BGM 반복
 
         self.player = Player()
         self.all_sprites = pygame.sprite.Group(self.player)
         self.enemies = pygame.sprite.Group()
         self.score = 0
-        self.lives = 3
+        self.max_hp = 100
+        self.hp = self.max_hp
+        self.display_hp = 100
         self.invincible_timer = 0
         self.spawn_timer = 0
         self.score_timer = 0
         self.rest_timer = 0
         self.level_idx = 0
         self.state = "PLAYING"
+        
 
     def draw_centered_text(self, text, font, color, y_pos):
         surface = font.render(text, True, color)
@@ -237,12 +279,7 @@ class Game:
         level_cfg = LEVELS[self.level_idx]
         
         self.screen.blit(self.font.render(f"Score: {self.score}", True, WHITE), (10, 10))
-        self.screen.blit(self.font.render(level_cfg['label'], True, YELLOW), (10, 40))
-        
-        # 하트 텍스트가 줄어드는 박스를 따라오게 할 수도 있지만, 
-        # 안정적인 레이아웃을 위해 화면 우측 상단 고정으로 약간 수정했습니다.
-        lives_surface = self.font.render(f"Lives: {'♥ ' * self.lives}", True, RED)
-        self.screen.blit(lives_surface, (WIDTH - lives_surface.get_width() - 20, 10))
+       
 
     def run(self):
         while True:
@@ -267,6 +304,13 @@ class Game:
             if self.state == "PLAYING":
                 level_cfg = LEVELS[self.level_idx]
                 self.all_sprites.update(dt)
+
+                # 👉 잔상 HP가 실제 HP를 따라오게
+                if self.display_hp > self.hp:
+                    self.display_hp -= 60 * dt   # 속도 (값 키우면 더 빨리 따라옴)
+
+                    if self.display_hp < self.hp:
+                        self.display_hp = self.hp
                 
                 self.spawn_timer += dt
                 if self.spawn_timer >= level_cfg["spawn_rate"]:
@@ -282,10 +326,13 @@ class Game:
                     
                     if self.score >= level_cfg["target_score"]:
                         if self.level_idx == len(LEVELS) - 1:
+                            pygame.mixer.music.stop()
+                            self.clear_sound.play()
                             self.state = "GAME_CLEAR"
                             for enemy in self.enemies:
                                 enemy.kill()
                         else:
+                            self.clear_sound.play()
                             self.state = "RESTING"
                             self.rest_timer = 5.0
                             for enemy in self.enemies:
@@ -294,13 +341,22 @@ class Game:
                 if self.invincible_timer > 0:
                     self.invincible_timer -= dt
                 else:
-                    if pygame.sprite.spritecollide(self.player, self.enemies, False):
-                        self.lives -= 1
+                    hits = [e for e in self.enemies if self.player.hitbox.colliderect(e.rect)]
+                    if hits:
+                        self.hit_sound.play()  # 🔥 피격 효과음
+                        for enemy in hits:
+                            self.hp -= enemy.damage
+
+                        self.hp = max(0, self.hp)  # 🔥 여기 추가 (핵심)
+
                         self.invincible_timer = 1.5
-                        for enemy in self.enemies:
-                            enemy.kill()
-                        
-                        if self.lives <= 0:
+                         # 🔥 화면 흔들림 시작
+                        self.shake_timer = 0.3
+                        self.shake_strength = 10
+
+                        if self.hp <= 0:
+                            pygame.mixer.music.stop()  # 🔥 BGM 멈춤
+                            self.gameover_sound.play()  # 🔥 게임오버 효과음
                             self.state = "GAME_OVER"
 
             # --- RESTING (휴식) 상태 ---
@@ -316,6 +372,17 @@ class Game:
                     # ⭐ 라운드가 올라갈 때마다 아레나 크기를 가로, 세로 20픽셀씩 줄입니다.
                     ARENA_RECT.inflate_ip(-20, -20)
 
+            # 🔥 여기 추가 (렌더링 직전)
+            offset = Vector2(0, 0)
+
+            if self.shake_timer > 0:
+                self.shake_timer -= dt
+
+                offset.x = random.uniform(-self.shake_strength, self.shake_strength)
+                offset.y = random.uniform(-self.shake_strength, self.shake_strength)
+
+                self.shake_strength *= 0.9
+
             # --- 화면 렌더링 파트 ---
             self.screen.fill(BLACK)
             
@@ -325,19 +392,25 @@ class Game:
 
             elif self.state in ["PLAYING", "RESTING"]:
                 # 줄어드는 아레나를 화면에 그립니다.
-                pygame.draw.rect(self.screen, WHITE, ARENA_RECT, 4)
+                pygame.draw.rect(self.screen, WHITE, ARENA_RECT.move(offset), 4)
 
                 blink = int(self.invincible_timer * 10) % 2 == 0
                 for sprite in self.all_sprites:
                     if sprite == self.player and not blink and self.invincible_timer > 0:
                         continue
-                    self.screen.blit(sprite.image, sprite.rect)
+                    self.screen.blit(sprite.image, sprite.rect.move(offset))
 
                 self.draw_hud()
+                self.draw_health_bar()   # 🔥 여기 추가
+
+                # 👉 비율 계산
+                hp_ratio = self.hp / self.max_hp
+                display_ratio = self.display_hp / self.max_hp
+
 
                 if self.state == "RESTING":
-                    self.draw_centered_text("ROUND CLEARED!", self.font_big, GREEN, 220)
-                    self.draw_centered_text(f"Next Round in {int(self.rest_timer) + 1}...", self.font, YELLOW, 310)
+                    next_round = self.level_idx + 2  # 현재 index 기준 +1이 다음 라운드, +1 더 해서 사람 기준
+                    self.draw_centered_text(f"ROUND {next_round}", self.font_big, YELLOW, HEIGHT // 2)
 
             elif self.state == "GAME_OVER":
                 self.draw_centered_text("GAME OVER", self.font_big, RED, 220)
@@ -350,7 +423,40 @@ class Game:
                 self.draw_centered_text("R: Restart   Q: Quit", self.font, WHITE, 360)
 
             pygame.display.flip()
+    def draw_health_bar(self):
+        bar_width = 200
+        bar_height = 20
 
+        # 👉 화면 아래 중앙 위치
+        x = WIDTH // 2 - bar_width // 2
+        y = HEIGHT - 40
+
+        # 👉 비율
+        hp_ratio = self.hp / self.max_hp
+        display_ratio = self.display_hp / self.max_hp
+
+        current_width = int(bar_width * hp_ratio)
+        display_width = int(bar_width * display_ratio)
+
+        # 👉 배경
+        pygame.draw.rect(self.screen, GRAY, (x, y, bar_width, bar_height))
+
+        # 🔥 👉 빨간 잔상 (먼저 그려야 뒤에 깔림)
+        pygame.draw.rect(self.screen, RED, (x, y, display_width, bar_height))
+
+        # 👉 실제 체력 색상
+        if hp_ratio > 0.6:
+            color = GREEN
+        elif hp_ratio > 0.3:
+            color = YELLOW
+        else:
+            color = RED
+
+        # 🔥 👉 실제 체력 (위에 덮어씀)
+        pygame.draw.rect(self.screen, color, (x, y, current_width, bar_height))
+
+        # 👉 테두리
+        pygame.draw.rect(self.screen, WHITE, (x, y, bar_width, bar_height), 2)
 if __name__ == "__main__":
     game = Game()
     game.run()
