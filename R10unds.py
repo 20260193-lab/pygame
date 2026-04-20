@@ -181,7 +181,7 @@ class Enemy(pygame.sprite.Sprite):
         if is_final:
             radius = 5
             color = (80, 180, 255)
-            self.damage = 8
+            self.damage = 9
         else:
             radius = 6
             color = WHITE
@@ -216,13 +216,15 @@ class Enemy(pygame.sprite.Sprite):
 
         self.trail = []
 
+        self.is_final = is_final
+
     def update(self, dt):
 
-        # ⭐ 잔상 저장
-        self.trail.append(self.pos.copy())
+        if self.is_final:
+            self.trail.append(self.pos.copy())
 
-        if len(self.trail) > 6:
-            self.trail.pop(0)
+            if len(self.trail) > 6:
+                self.trail.pop(0)
 
         self.pos += self.velocity * dt
         self.rect.center = (round(self.pos.x), round(self.pos.y))
@@ -232,12 +234,13 @@ class Enemy(pygame.sprite.Sprite):
             self.kill()
     
     def draw(self, screen, offset):
-        for i, p in enumerate(self.trail):
-            alpha = int(80 * (i / len(self.trail)))
-            surf = pygame.Surface(self.image.get_size(), pygame.SRCALPHA)
-            surf.fill((80, 180, 255, alpha))
-            rect = surf.get_rect(center=(int(p.x), int(p.y)))
-            screen.blit(surf, rect.move(offset))
+        if self.is_final:
+            for i, p in enumerate(self.trail):
+                alpha = int(80 * (i / len(self.trail)))
+                surf = pygame.Surface(self.image.get_size(), pygame.SRCALPHA)
+                surf.fill((80, 180, 255, alpha))
+                rect = surf.get_rect(center=(int(p.x), int(p.y)))
+                screen.blit(surf, rect.move(offset))
 
         screen.blit(self.image, self.rect.move(offset))
 
@@ -455,7 +458,7 @@ class Game:
         self.items = pygame.sprite.Group()
 
         self.item_spawn_timer = 0
-
+        self.invincible_timer = 0
         self.player = None
         self.all_sprites = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
@@ -472,6 +475,12 @@ class Game:
 
         self.shake_timer = 0
         self.shake_strength = 0
+
+        self.score = 0
+        self.hp = 100
+        self.display_hp = 100
+        self.invincible_timer = 0
+        self.player = None
 
     def reset_game(self):
 
@@ -509,7 +518,10 @@ class Game:
     def draw_hud(self):
         self.screen.blit(self.font.render(f"Score: {int(self.score)}", True, WHITE), (10, 10))
 
-        round_duration = 10 + self.level_idx
+        if self.level_idx == 9:
+            round_duration = 30
+        else:
+            round_duration = 10 + self.level_idx
         remaining = max(0, int(round_duration - self.round_timer))
 
         self.screen.blit(self.font.render(f"Time: {remaining}", True, WHITE), (10, 50))
@@ -551,7 +563,10 @@ class Game:
                 # 👉 라운드 시간 진행
                 self.round_timer += dt
 
-                round_duration = 10 + self.level_idx
+                if self.level_idx == 9:
+                    round_duration = 30
+                else:
+                    round_duration = 10 + self.level_idx
 
 
                 # 👉 라운드 클리어 체크 (시간 기준)
@@ -580,38 +595,30 @@ class Game:
                 
                 self.spawn_timer += dt
 
-                # ⭐ Round 10이면 더 자주 나오게
-                if self.level_idx == 9:
-                    spawn_rate = level_cfg["spawn_rate"] * 0.5
-                else:
-                    spawn_rate = level_cfg["spawn_rate"]
+                spawn_rate = level_cfg["spawn_rate"]
 
                 if self.spawn_timer >= spawn_rate:
                     self.spawn_timer = 0
 
-                # ⭐⭐⭐ 10라운드 최우선 처리 (기존 로직 완전 차단)
-                if self.level_idx == 9:
-                    enemy = Enemy(level_cfg, is_final=True)
-
-                    self.enemies.add(enemy)
-                    self.all_sprites.add(enemy)
-
-                else:
-                    # 👉 기존 라운드 로직
-                    if self.level_idx < 3:
-                        enemy = Enemy(level_cfg)
-
-                    elif self.level_idx < 6:
-                        enemy = Enemy(level_cfg) if random.random() < 0.6 else ParabolicEnemy(level_cfg)
+                    # ⭐ 10라운드 완전 차단
+                    if self.level_idx == 9:
+                        enemy = Enemy(level_cfg, is_final=True)
 
                     else:
-                        r = random.random()
-                        if r < 0.3:
+                        if self.level_idx < 3:
                             enemy = Enemy(level_cfg)
-                        elif r < 0.7:
-                            enemy = ParabolicEnemy(level_cfg)
+
+                        elif self.level_idx < 6:
+                            enemy = Enemy(level_cfg) if random.random() < 0.6 else ParabolicEnemy(level_cfg)
+
                         else:
-                            enemy = SplitEnemy(level_cfg)
+                            r = random.random()
+                            if r < 0.3:
+                                enemy = Enemy(level_cfg)
+                            elif r < 0.7:
+                                enemy = ParabolicEnemy(level_cfg)
+                            else:
+                                enemy = SplitEnemy(level_cfg)
 
                     self.enemies.add(enemy)
                     self.all_sprites.add(enemy)
@@ -676,6 +683,9 @@ class Game:
                     if self.level_idx == 9:   # Round 10
                         self.state = "ROUND10_INTRO"
                         self.round10_intro_timer = 0
+
+                        self.hp = 100
+                        self.display_hp = 100
 
                         # ⭐ 아레나 크기 복구
                         ARENA_RECT.size = (300, 300)
