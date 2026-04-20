@@ -1,6 +1,7 @@
 import pygame
 import random
 import sys
+import math
 from pygame.math import Vector2
 
 import base64, io
@@ -174,20 +175,28 @@ class Player(pygame.sprite.Sprite):
         self.rect = self.image.get_rect(center=center)  # 새 크기에 맞게 rect 재설정
 
 class Enemy(pygame.sprite.Sprite):
-    def __init__(self, level_cfg):
+    def __init__(self, level_cfg, is_final=False):
         super().__init__()
 
-        self.damage = 5
-
-        radius = 6 # 장애물 크기를 작게 통일
+        if is_final:
+            radius = 5
+            color = (80, 180, 255)
+            self.damage = 8
+        else:
+            radius = 6
+            color = WHITE
+            self.damage = 5
         
         # 배경이 투명한 원형 장애물 생성
         self.image = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-        pygame.draw.circle(self.image, WHITE, (radius, radius), radius)
+        pygame.draw.circle(self.image, color, (radius, radius), radius)
         
         self.rect = self.image.get_rect()
         
         speed = random.randint(level_cfg["min_speed"], level_cfg["max_speed"])
+
+        if is_final:
+            speed *= 2.2
         
         # 화면 밖 스폰 위치 설정
         side = random.choice(["top", "bottom", "left", "right"])
@@ -205,12 +214,228 @@ class Enemy(pygame.sprite.Sprite):
         self.pos = start_pos
         self.rect.center = (round(self.pos.x), round(self.pos.y))
 
+        self.trail = []
+
     def update(self, dt):
+
+        # ⭐ 잔상 저장
+        self.trail.append(self.pos.copy())
+
+        if len(self.trail) > 6:
+            self.trail.pop(0)
+
         self.pos += self.velocity * dt
         self.rect.center = (round(self.pos.x), round(self.pos.y))
         
         # 화면을 벗어나면 삭제
         if not (-100 < self.pos.x < WIDTH + 100 and -100 < self.pos.y < HEIGHT + 100):
+            self.kill()
+    
+    def draw(self, screen, offset):
+        for i, p in enumerate(self.trail):
+            alpha = int(80 * (i / len(self.trail)))
+            surf = pygame.Surface(self.image.get_size(), pygame.SRCALPHA)
+            surf.fill((80, 180, 255, alpha))
+            rect = surf.get_rect(center=(int(p.x), int(p.y)))
+            screen.blit(surf, rect.move(offset))
+
+        screen.blit(self.image, self.rect.move(offset))
+
+class ParabolicEnemy(pygame.sprite.Sprite):
+    def __init__(self, level_cfg):
+        super().__init__()
+
+        self.damage = 7
+
+        radius = 4
+        self.image = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(self.image, (255, 150, 0), (radius, radius), radius)
+
+        self.rect = self.image.get_rect()
+
+        # 👉 시작 위치 (위쪽에서 떨어지게)
+        self.pos = Vector2(random.uniform(ARENA_RECT.left, ARENA_RECT.right), -50)
+
+        self.velocity = Vector2(
+            random.uniform(-50, 50),   # 좌우 살짝 흔들림
+            random.uniform(0, 50)      # 처음엔 느리게 시작
+        )
+
+        self.gravity = random.uniform(600, 900)  # 👈 핵심 (클수록 빠르게 떨어짐)
+
+        # 👉 시간 기반 이동
+        self.t = 0
+        self.duration = random.uniform(9.0, 10.5)
+
+        # 👉 포물선 높이 (클수록 더 휘어짐)
+        self.height = random.randint(80, 150)
+
+    def update(self, dt):
+        # 👉 중력 적용 (속도 증가)
+        self.velocity.y += self.gravity * dt
+
+        # 👉 이동
+        self.pos += self.velocity * dt
+        self.rect.center = (round(self.pos.x), round(self.pos.y))
+
+        # 👉 화면 밖 나가면 제거
+        if not (-100 < self.pos.x < WIDTH + 100 and -100 < self.pos.y < HEIGHT + 100):
+            self.kill()
+
+
+class SplitEnemy(pygame.sprite.Sprite):
+    def __init__(self, level_cfg):
+        super().__init__()
+
+        self.damage = 8
+
+        # 👉 큰 탄
+        self.radius = 12
+        self.image = pygame.Surface((self.radius*2, self.radius*2), pygame.SRCALPHA)
+        pygame.draw.circle(self.image, (255, 100, 100), (self.radius, self.radius), self.radius)
+
+        self.rect = self.image.get_rect()
+
+        speed = random.randint(level_cfg["min_speed"], level_cfg["max_speed"])
+
+        # 👉 기존 Enemy처럼 직선 이동
+        side = random.choice(["top", "bottom", "left", "right"])
+        if side == "top":      start = Vector2(random.uniform(0, WIDTH), -50)
+        elif side == "bottom": start = Vector2(random.uniform(0, WIDTH), HEIGHT + 50)
+        elif side == "left":   start = Vector2(-50, random.uniform(0, HEIGHT))
+        else:                  start = Vector2(WIDTH + 50, random.uniform(0, HEIGHT))
+
+        target = Vector2(
+            random.uniform(ARENA_RECT.left, ARENA_RECT.right),
+            random.uniform(ARENA_RECT.top, ARENA_RECT.bottom)
+        )
+
+        direction = (target - start).normalize()
+        self.velocity = direction * speed
+
+        self.pos = start
+        self.rect.center = self.pos
+
+        # 👉 분열 타이밍
+        self.timer = 0
+        self.split_time = random.uniform(0.8, 1.2)
+
+    def update(self, dt):
+        self.timer += dt
+        self.pos += self.velocity * dt
+        self.rect.center = (round(self.pos.x), round(self.pos.y))
+
+        # 👉 중간에 분열
+        if self.timer >= self.split_time:
+            self.split()
+            self.kill()
+
+        # 화면 밖 제거
+        if not (-100 < self.pos.x < WIDTH + 100 and -100 < self.pos.y < HEIGHT + 100):
+            self.kill()
+
+    def split(self):
+        bullets = []
+        count = random.randint(10, 16)
+
+        for i in range(count):
+            angle = (360 / count) * i
+            rad = angle * (3.14159 / 180)
+
+            direction = Vector2(math.cos(rad), math.sin(rad))
+            bullets.append(SplitBullet(self.pos, direction))
+
+        for b in bullets:
+            self.groups()[0].add(b)   # all_sprites
+            # enemies에도 넣어야 충돌됨
+            for g in self.groups():
+                if isinstance(g, pygame.sprite.Group):
+                    g.add(b)
+
+    def set_groups(self, all_sprites, enemies):
+        self.all_sprites = all_sprites
+        self.enemies = enemies
+
+
+class SplitBullet(pygame.sprite.Sprite):
+    def __init__(self, pos, direction):
+        super().__init__()
+
+        self.damage = 3
+
+        self.radius = 3
+        self.image = pygame.Surface((self.radius*2, self.radius*2), pygame.SRCALPHA)
+        pygame.draw.circle(self.image, (255, 200, 200), (self.radius, self.radius), self.radius)
+
+        self.rect = self.image.get_rect(center=pos)
+
+        self.pos = Vector2(pos)
+        self.velocity = direction * random.uniform(200, 300)
+
+    def update(self, dt):
+        self.pos += self.velocity * dt
+        self.rect.center = (round(self.pos.x), round(self.pos.y))
+
+        if not (-100 < self.pos.x < WIDTH + 100 and -100 < self.pos.y < HEIGHT + 100):
+            self.kill()
+
+class HealItem(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+
+        self.heal_amount = 20  # 회복량
+
+        radius = 8
+        self.image = pygame.Surface((radius*2, radius*2), pygame.SRCALPHA)
+        pygame.draw.circle(self.image, (100, 255, 100), (radius, radius), radius)
+
+        self.rect = self.image.get_rect()
+
+        # 👉 아레나 내부 랜덤 위치
+        self.pos = Vector2(
+            random.uniform(ARENA_RECT.left, ARENA_RECT.right),
+            random.uniform(ARENA_RECT.top, ARENA_RECT.bottom)
+        )
+
+        self.rect.center = self.pos
+
+    def update(self, dt):
+        pass
+
+class HealEffect(pygame.sprite.Sprite):
+    def __init__(self, pos):
+        super().__init__()
+
+        self.pos = Vector2(pos)
+        self.radius = 5
+        self.max_radius = 30
+
+        self.life = 0
+        self.duration = 0.4  # 지속 시간
+
+        self.image = pygame.Surface((self.max_radius*2, self.max_radius*2), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(center=pos)
+
+    def update(self, dt):
+        self.life += dt
+
+        # 👉 점점 커짐
+        progress = self.life / self.duration
+        self.radius = int(self.max_radius * (progress ** 0.5))
+
+        # 👉 투명도 감소
+        alpha = max(0, 255 * (1 - progress))
+
+        self.image.fill((0,0,0,0))
+        pygame.draw.circle(
+            self.image,
+            (100, 255, 100, int(alpha)),
+            (self.max_radius, self.max_radius),
+            self.radius,
+            3
+        )
+
+        if self.life >= self.duration:
             self.kill()
 
 class Game:
@@ -226,7 +451,11 @@ class Game:
         self.font_big = get_korean_font(72)
         
         self.state = "START_SCREEN"
-        
+
+        self.items = pygame.sprite.Group()
+
+        self.item_spawn_timer = 0
+
         self.player = None
         self.all_sprites = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
@@ -262,10 +491,12 @@ class Game:
         self.max_hp = 100
         self.hp = self.max_hp
         self.display_hp = 100
+        self.round10_intro_timer = 0
         self.invincible_timer = 0
+        self.items.empty()
         self.spawn_timer = 0
-        self.score_timer = 0
         self.rest_timer = 0
+        self.round_timer = 0
         self.level_idx = 0
         self.state = "PLAYING"
         
@@ -276,9 +507,12 @@ class Game:
         self.screen.blit(surface, rect)
 
     def draw_hud(self):
-        level_cfg = LEVELS[self.level_idx]
-        
-        self.screen.blit(self.font.render(f"Score: {self.score}", True, WHITE), (10, 10))
+        self.screen.blit(self.font.render(f"Score: {int(self.score)}", True, WHITE), (10, 10))
+
+        round_duration = 10 + self.level_idx
+        remaining = max(0, int(round_duration - self.round_timer))
+
+        self.screen.blit(self.font.render(f"Time: {remaining}", True, WHITE), (10, 50))
        
 
     def run(self):
@@ -299,11 +533,43 @@ class Game:
                             self.reset_game()
                         if e.key == pygame.K_q: 
                             pygame.quit(); sys.exit()
+                
+                if e.type == pygame.KEYDOWN:
+                    if e.key == pygame.K_t:   # ⭐ 테스트용 키 (T)
+                        self.level_idx = 8   # Round 9 상태로 설정 (다음이 Round 10)
+                        self.state = "RESTING"
+                        self.rest_timer = 0.1   # 바로 다음 라운드 넘어가게
 
             # --- PLAYING 상태 ---
             if self.state == "PLAYING":
                 level_cfg = LEVELS[self.level_idx]
                 self.all_sprites.update(dt)
+
+                # 👉 점수 실시간 증가 (여기에 추가)
+                self.score += 50 * dt
+
+                # 👉 라운드 시간 진행
+                self.round_timer += dt
+
+                round_duration = 10 + self.level_idx
+
+
+                # 👉 라운드 클리어 체크 (시간 기준)
+                if self.round_timer >= round_duration:
+                    if self.level_idx == len(LEVELS) - 1:
+                        pygame.mixer.music.stop()
+                        self.clear_sound.play()
+                        self.state = "GAME_CLEAR"
+
+                        for enemy in self.enemies:
+                            enemy.kill()
+
+                    else:
+                        self.state = "RESTING"
+                        self.rest_timer = 5.0
+
+                        for enemy in self.enemies:
+                            enemy.kill()
 
                 # 👉 잔상 HP가 실제 HP를 따라오게
                 if self.display_hp > self.hp:
@@ -313,30 +579,54 @@ class Game:
                         self.display_hp = self.hp
                 
                 self.spawn_timer += dt
-                if self.spawn_timer >= level_cfg["spawn_rate"]:
+
+                # ⭐ Round 10이면 더 자주 나오게
+                if self.level_idx == 9:
+                    spawn_rate = level_cfg["spawn_rate"] * 0.5
+                else:
+                    spawn_rate = level_cfg["spawn_rate"]
+
+                if self.spawn_timer >= spawn_rate:
                     self.spawn_timer = 0
-                    enemy = Enemy(level_cfg)
+
+                # ⭐⭐⭐ 10라운드 최우선 처리 (기존 로직 완전 차단)
+                if self.level_idx == 9:
+                    enemy = Enemy(level_cfg, is_final=True)
+
                     self.enemies.add(enemy)
                     self.all_sprites.add(enemy)
 
-                self.score_timer += dt
-                if self.score_timer >= 1.0:
-                    self.score += 10
-                    self.score_timer = 0
-                    
-                    if self.score >= level_cfg["target_score"]:
-                        if self.level_idx == len(LEVELS) - 1:
-                            pygame.mixer.music.stop()
-                            self.clear_sound.play()
-                            self.state = "GAME_CLEAR"
-                            for enemy in self.enemies:
-                                enemy.kill()
+                else:
+                    # 👉 기존 라운드 로직
+                    if self.level_idx < 3:
+                        enemy = Enemy(level_cfg)
+
+                    elif self.level_idx < 6:
+                        enemy = Enemy(level_cfg) if random.random() < 0.6 else ParabolicEnemy(level_cfg)
+
+                    else:
+                        r = random.random()
+                        if r < 0.3:
+                            enemy = Enemy(level_cfg)
+                        elif r < 0.7:
+                            enemy = ParabolicEnemy(level_cfg)
                         else:
-                            self.clear_sound.play()
-                            self.state = "RESTING"
-                            self.rest_timer = 5.0
-                            for enemy in self.enemies:
-                                enemy.kill()
+                            enemy = SplitEnemy(level_cfg)
+
+                    self.enemies.add(enemy)
+                    self.all_sprites.add(enemy)
+
+                    # 🟢 👇👇 여기 추가 (이 위치가 핵심)
+                    self.item_spawn_timer += dt
+
+                    if self.item_spawn_timer >= 1.0:
+                        self.item_spawn_timer = 0
+
+                        if random.random() < 0.1:
+                            item = HealItem()
+                            self.items.add(item)
+                            self.all_sprites.add(item)
+            
 
                 if self.invincible_timer > 0:
                     self.invincible_timer -= dt
@@ -359,6 +649,20 @@ class Game:
                             self.gameover_sound.play()  # 🔥 게임오버 효과음
                             self.state = "GAME_OVER"
 
+                # 👉 힐 아이템 충돌 (여기에 추가!!)
+                item_hits = pygame.sprite.spritecollide(self.player, self.items, True)
+
+                for item in item_hits:
+                    self.hp += item.heal_amount
+                    self.hp = min(self.hp, self.max_hp)
+
+                    # 🔥 이펙트 생성
+                    effect = HealEffect(self.player.rect.center)
+                    self.all_sprites.add(effect)
+
+    
+
+
             # --- RESTING (휴식) 상태 ---
             elif self.state == "RESTING":
                 if self.player:
@@ -367,10 +671,28 @@ class Game:
                 
                 if self.rest_timer <= 0:
                     self.level_idx += 1
-                    self.state = "PLAYING"
+
+                    # ⭐ 마지막 라운드 진입
+                    if self.level_idx == 9:   # Round 10
+                        self.state = "ROUND10_INTRO"
+                        self.round10_intro_timer = 0
+
+                        # ⭐ 아레나 크기 복구
+                        ARENA_RECT.size = (300, 300)
+                        ARENA_RECT.center = (WIDTH // 2, HEIGHT // 2)
+                    else:
+                        self.state = "PLAYING"
+
+                    self.round_timer = 0
                     
                     # ⭐ 라운드가 올라갈 때마다 아레나 크기를 가로, 세로 20픽셀씩 줄입니다.
                     ARENA_RECT.inflate_ip(-20, -20)
+
+            elif self.state == "ROUND10_INTRO":
+                self.round10_intro_timer += dt
+
+                if self.round10_intro_timer >= 3.5:
+                    self.state = "PLAYING"
 
             # 🔥 여기 추가 (렌더링 직전)
             offset = Vector2(0, 0)
@@ -398,7 +720,11 @@ class Game:
                 for sprite in self.all_sprites:
                     if sprite == self.player and not blink and self.invincible_timer > 0:
                         continue
-                    self.screen.blit(sprite.image, sprite.rect.move(offset))
+
+                    if hasattr(sprite, "draw"):
+                        sprite.draw(self.screen, offset)
+                    else:
+                        self.screen.blit(sprite.image, sprite.rect.move(offset))
 
                 self.draw_hud()
                 self.draw_health_bar()   # 🔥 여기 추가
@@ -412,6 +738,37 @@ class Game:
                     next_round = self.level_idx + 2  # 현재 index 기준 +1이 다음 라운드, +1 더 해서 사람 기준
                     self.draw_centered_text(f"ROUND {next_round}", self.font_big, YELLOW, HEIGHT // 2)
 
+            elif self.state == "ROUND10_INTRO":
+                self.screen.fill(BLACK)
+
+                t = self.round10_intro_timer
+
+                duration = 3.0   # 전체 연출 시간
+                fade_time = 1.5  # 교차 페이드 구간
+
+                # 👉 0 ~ 1.5초: ROUND 10
+                if t < fade_time:
+                    alpha_out = 255 - int((t / fade_time) * 255)
+
+                    text1 = self.font_big.render("ROUND 10", True, YELLOW)
+                    text1.set_alpha(alpha_out)
+
+                    rect1 = text1.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+                    self.screen.blit(text1, rect1)
+
+                # 👉 1.5 ~ 3초: R10unds 페이드 인
+                if t > (fade_time / 2):
+                    fade_progress = (t - fade_time / 2) / fade_time
+                    fade_progress = max(0, min(1, fade_progress))
+
+                    alpha_in = int(fade_progress * 255)
+
+                    text2 = self.font_big.render("R10unds", True, YELLOW)
+                    text2.set_alpha(alpha_in)
+
+                    rect2 = text2.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+                    self.screen.blit(text2, rect2)
+
             elif self.state == "GAME_OVER":
                 self.draw_centered_text("GAME OVER", self.font_big, RED, 220)
                 self.draw_centered_text(f"Final Score: {self.score}", self.font, WHITE, 310)
@@ -423,6 +780,7 @@ class Game:
                 self.draw_centered_text("R: Restart   Q: Quit", self.font, WHITE, 360)
 
             pygame.display.flip()
+
     def draw_health_bar(self):
         bar_width = 200
         bar_height = 20
