@@ -2,9 +2,18 @@ import pygame
 import random
 import sys
 import math
+import os
 from pygame.math import Vector2
 
 import base64, io
+
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 def load_base64_image(b64_string):
     image_data = base64.b64decode(b64_string)
@@ -444,9 +453,6 @@ class HealEffect(pygame.sprite.Sprite):
 class Game:
     def __init__(self):
 
-        import os
-        print(os.listdir("sounds"))
-
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("R10unds")
         self.clock = pygame.time.Clock()
@@ -464,12 +470,12 @@ class Game:
         self.enemies = pygame.sprite.Group()
 
         # 🔥 --- 사운드 추가 ---
-        pygame.mixer.music.load("./sounds/bgm.mp3")
+        pygame.mixer.music.load(resource_path("sounds/bgm.mp3"))
         pygame.mixer.music.set_volume(0.5)
 
-        self.hit_sound = pygame.mixer.Sound("./sounds/hit.wav")
-        self.clear_sound = pygame.mixer.Sound("./sounds/clear.mp3")
-        self.gameover_sound = pygame.mixer.Sound("./sounds/gameover.mp3")
+        self.hit_sound = pygame.mixer.Sound(resource_path("sounds/hit.wav"))
+        self.clear_sound = pygame.mixer.Sound(resource_path("sounds/clear.mp3"))
+        self.gameover_sound = pygame.mixer.Sound(resource_path("sounds/gameover.mp3"))
 
         self.hit_sound.set_volume(0.7)
 
