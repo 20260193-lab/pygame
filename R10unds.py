@@ -50,6 +50,12 @@ WHITE, BLACK, GRAY = (255, 255, 255), (0, 0, 0), (40, 40, 40)
 BLUE, RED, YELLOW = (50, 150, 255), (255, 60, 60), (240, 200, 0)
 GREEN = (50, 220, 80)
 
+TIER_COLORS = {
+    "silver": (180, 180, 180),
+    "gold": (255, 210, 60),
+    "platinum": (120, 255, 255)
+}
+
 ARENA_W, ARENA_H = 300, 300
 # 전역 변수로 관리하여 클래스들 사이에서 공유
 ARENA_RECT = pygame.Rect((WIDTH - ARENA_W) // 2, (HEIGHT - ARENA_H) // 2, ARENA_W, ARENA_H)
@@ -67,6 +73,7 @@ LEVELS = [
     }
     for i in range(10)
 ]
+
 
 class Player(pygame.sprite.Sprite):
     def __init__(self):
@@ -105,41 +112,102 @@ class Player(pygame.sprite.Sprite):
         
         self.current_state = "down_idle"
 
-    def update(self, dt):
+        self.dash_speed = 900
+        self.dashing = False
+        self.dash_timer = 0
+        self.dash_duration = 0.18
+
+        self.dash_cooldown = 1.5
+        self.dash_cooldown_timer = 0
+
+        self.dash_direction = Vector2(0, 0)
+
+        self.afterimages = []
+
+        self.hit_slow_timer = 0
+
+    def update(self, dt, game):
         keys = pygame.key.get_pressed()
+
         move = Vector2(0, 0)
 
-        if keys[pygame.K_LEFT]:
-            move.x = -1
-            self.direction = "left"
-        if keys[pygame.K_RIGHT]:
-            move.x = 1
-            self.direction = "right"
-        if keys[pygame.K_UP]:
-            move.y = -1
-            self.direction = "up"
-        if keys[pygame.K_DOWN]:
-            move.y = 1
-            self.direction = "down"
+        current_speed = self.speed
 
-        self.moving = move.length() > 0
+        if self.hit_slow_timer > 0:
+            self.hit_slow_timer -= dt
+            current_speed *= 0.55
 
-        if self.moving:
-            move = move.normalize()
+        if not self.dashing:
+            if keys[pygame.K_LEFT]:
+                move.x = -1
+                self.direction = "left"
 
-        self.pos += move * self.speed * dt
+            if keys[pygame.K_RIGHT]:
+                move.x = 1
+                self.direction = "right"
 
-        # 👉 hitbox 기준 이동
+            if keys[pygame.K_UP]:
+                move.y = -1
+                self.direction = "up"
+
+            if keys[pygame.K_DOWN]:
+                move.y = 1
+                self.direction = "down"
+
+            self.moving = move.length() > 0
+
+            if self.moving:
+                move = move.normalize()
+                self.dash_direction = move
+
+            # SHIFT 대쉬
+            if keys[pygame.K_LSHIFT] and self.dash_cooldown_timer <= 0:
+                if self.dash_direction.length() > 0:
+                    self.dashing = True
+                    self.dash_timer = self.dash_duration
+                    self.dash_cooldown_timer = self.dash_cooldown
+
+        # 대쉬 중
+        if self.dashing:
+            self.pos += self.dash_direction * self.dash_speed * dt
+
+            self.dash_timer -= dt
+
+            if self.dash_timer <= 0:
+                self.dashing = False
+
+       
+        else:
+            self.pos += move * current_speed * dt
+
+        # 쿨다운 감소
+        if self.dash_cooldown_timer > 0:
+            self.dash_cooldown_timer -= dt
+
         self.hitbox.center = (round(self.pos.x), round(self.pos.y))
         self.hitbox.clamp_ip(ARENA_RECT)
 
-        # 👉 rect는 hitbox 따라가게
         self.rect.center = self.hitbox.center
-
-        # 👉 pos도 hitbox 기준으로 다시 맞춤
         self.pos = Vector2(self.hitbox.center)
 
         self.update_sprite(dt)
+
+        if self.dashing:
+            self.afterimages.append({
+                "image": self.image.copy(),
+                "rect": self.rect.copy(),
+                "time": 0.25
+            })
+
+        # 잔상 시간 감소
+        for after in self.afterimages:
+            after["time"] -= dt
+
+        # 시간이 끝난 잔상 제거
+        self.afterimages = [
+            a for a in self.afterimages
+            if a["time"] > 0
+        ]
 
     def update_sprite(self, dt):
         state = "run" if self.moving else "idle"
@@ -227,7 +295,7 @@ class Enemy(pygame.sprite.Sprite):
 
         self.is_final = is_final
 
-    def update(self, dt):
+    def update(self, dt, game=None):
 
         if self.is_final:
             self.trail.append(self.pos.copy())
@@ -282,7 +350,7 @@ class ParabolicEnemy(pygame.sprite.Sprite):
         # 👉 포물선 높이 (클수록 더 휘어짐)
         self.height = random.randint(80, 150)
 
-    def update(self, dt):
+    def update(self, dt, game=None):
         # 👉 중력 적용 (속도 증가)
         self.velocity.y += self.gravity * dt
 
@@ -332,7 +400,7 @@ class SplitEnemy(pygame.sprite.Sprite):
         self.timer = 0
         self.split_time = random.uniform(0.8, 1.2)
 
-    def update(self, dt):
+    def update(self, dt, game=None):
         self.timer += dt
         self.pos += self.velocity * dt
         self.rect.center = (round(self.pos.x), round(self.pos.y))
@@ -384,7 +452,7 @@ class SplitBullet(pygame.sprite.Sprite):
         self.pos = Vector2(pos)
         self.velocity = direction * random.uniform(200, 300)
 
-    def update(self, dt):
+    def update(self, dt, game=None):
         self.pos += self.velocity * dt
         self.rect.center = (round(self.pos.x), round(self.pos.y))
 
@@ -411,7 +479,7 @@ class HealItem(pygame.sprite.Sprite):
 
         self.rect.center = self.pos
 
-    def update(self, dt):
+    def update(self, dt, game=None):
         pass
 
 class HealEffect(pygame.sprite.Sprite):
@@ -428,7 +496,7 @@ class HealEffect(pygame.sprite.Sprite):
         self.image = pygame.Surface((self.max_radius*2, self.max_radius*2), pygame.SRCALPHA)
         self.rect = self.image.get_rect(center=pos)
 
-    def update(self, dt):
+    def update(self, dt, game=None):
         self.life += dt
 
         # 👉 점점 커짐
@@ -484,6 +552,7 @@ class Game:
 
         self.score = 0
         self.hp = 100
+       
         self.display_hp = 100
         self.invincible_timer = 0
         self.player = None
@@ -521,17 +590,75 @@ class Game:
         rect = surface.get_rect(center=(WIDTH // 2, y_pos))
         self.screen.blit(surface, rect)
 
-    def draw_hud(self):
-        self.screen.blit(self.font.render(f"Score: {int(self.score)}", True, WHITE), (10, 10))
 
+    def draw_hud(self):
+        self.screen.blit(
+            self.font.render(f"Score: {int(self.score)}", True, WHITE),
+            (10, 10)
+        )
+
+        # 진행률 계산
         if self.level_idx == 9:
             round_duration = 30
         else:
             round_duration = 10 + self.level_idx
-        remaining = max(0, int(round_duration - self.round_timer))
 
-        self.screen.blit(self.font.render(f"Time: {remaining}", True, WHITE), (10, 50))
+        progress = min(1, self.round_timer / round_duration)
+
+        bar_width = 300
+        bar_height = 18
+
+        x = WIDTH // 2 - bar_width // 2
+        y = 20
+
+        pygame.draw.rect(self.screen, GRAY, (x, y, bar_width, bar_height))
+        pygame.draw.rect(
+            self.screen,
+            BLUE,
+            (x, y, int(bar_width * progress), bar_height)
+        )
+
+        pygame.draw.rect(self.screen, WHITE, (x, y, bar_width, bar_height), 2)
+
+        label = self.font.render(
+            f"ROUND {self.level_idx + 1}",
+            True,
+            WHITE
+        )
+
+        self.screen.blit(label, label.get_rect(center=(WIDTH // 2, y + 35)))
+
+        # 대쉬 UI
+        dash_ratio = max(0, self.player.dash_cooldown_timer / self.player.dash_cooldown)
+
+        cool_w = 120
+        cool_h = 12
+
+        cool_x = WIDTH // 2 - cool_w // 2
+        cool_y = HEIGHT - 70
+
+        pygame.draw.rect(self.screen, GRAY, (cool_x, cool_y, cool_w, cool_h))
+
+        pygame.draw.rect(
+            self.screen,
+            YELLOW,
+            (
+                cool_x,
+                cool_y,
+                int(cool_w * (1 - dash_ratio)),
+                cool_h
+            )
+        )
+
+        pygame.draw.rect(self.screen, WHITE, (cool_x, cool_y, cool_w, cool_h), 2)
+
+        dash_text = self.font.render("DASH", True, WHITE)
+        self.screen.blit(
+            dash_text,
+            dash_text.get_rect(center=(WIDTH // 2, cool_y - 28))
+        )
        
+
 
     def run(self):
         while True:
@@ -552,19 +679,15 @@ class Game:
                         if e.key == pygame.K_q: 
                             pygame.quit(); sys.exit()
                 
-                if e.type == pygame.KEYDOWN:
-                    if e.key == pygame.K_t:   # ⭐ 테스트용 키 (T)
-                        self.level_idx = 8   # Round 9 상태로 설정 (다음이 Round 10)
-                        self.state = "RESTING"
-                        self.rest_timer = 0.1   # 바로 다음 라운드 넘어가게
-
+                
             # --- PLAYING 상태 ---
             if self.state == "PLAYING":
                 level_cfg = LEVELS[self.level_idx]
-                self.all_sprites.update(dt)
+                self.all_sprites.update(dt, self)
 
                 # 👉 점수 실시간 증가 (여기에 추가)
                 self.score += 50 * dt
+
 
                 # 👉 라운드 시간 진행
                 self.round_timer += dt
@@ -641,7 +764,7 @@ class Game:
                             self.all_sprites.add(item)
             
 
-                if self.invincible_timer > 0:
+                if self.invincible_timer > 0 or self.player.dashing:
                     self.invincible_timer -= dt
                 else:
                     hits = [e for e in self.enemies if self.player.hitbox.colliderect(e.rect)]
@@ -653,6 +776,7 @@ class Game:
                         self.hp = max(0, self.hp)  # 🔥 여기 추가 (핵심)
 
                         self.invincible_timer = 1.5
+                        self.player.hit_slow_timer = 0.12
                          # 🔥 화면 흔들림 시작
                         self.shake_timer = 0.3
                         self.shake_strength = 10
@@ -679,7 +803,7 @@ class Game:
             # --- RESTING (휴식) 상태 ---
             elif self.state == "RESTING":
                 if self.player:
-                    self.player.update(dt)
+                    self.player.update(dt, self)
                 self.rest_timer -= dt
                 
                 if self.rest_timer <= 0:
@@ -737,6 +861,14 @@ class Game:
                     if sprite == self.player and not blink and self.invincible_timer > 0:
                         continue
 
+                    for after in self.player.afterimages:
+                        temp = after["image"].copy()
+
+                        alpha = int(255 * (after["time"] / 0.25))
+                        temp.set_alpha(alpha)
+
+                        self.screen.blit(temp, after["rect"].move(offset))
+
                     if hasattr(sprite, "draw"):
                         sprite.draw(self.screen, offset)
                     else:
@@ -754,6 +886,7 @@ class Game:
                     next_round = self.level_idx + 2  # 현재 index 기준 +1이 다음 라운드, +1 더 해서 사람 기준
                     self.draw_centered_text(f"ROUND {next_round}", self.font_big, YELLOW, HEIGHT // 2)
 
+            
             elif self.state == "ROUND10_INTRO":
                 self.screen.fill(BLACK)
 
