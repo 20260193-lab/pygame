@@ -11,7 +11,7 @@ WIDTH = 1000
 HEIGHT = 600
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("2D 횡스크롤 - 콤보 다단히트 & 보스 UI 하단 이동")
+pygame.display.set_caption("2D 횡스크롤 - 콤보 공격 속도 가속 시스템")
 
 clock = pygame.time.Clock()
 GROUND_Y = 500
@@ -60,6 +60,7 @@ animations = {
     "attack_combo_no_move": load_sprite_sheet("sprites/Player/_AttackComboNoMovement.png", 120, 80, scale=2.5),
 }
 
+# 기본 속도 정의
 state_data = {
     "idle": {"speed": 0, "animation_speed": 0.2},
     "run": {"speed": 5, "animation_speed": 0.3},
@@ -67,11 +68,11 @@ state_data = {
     "jump": {"speed": 5, "animation_speed": 0.2},
     "fall": {"speed": 5, "animation_speed": 0.2},
     
-    "attack1": {"speed": 0, "animation_speed": 0.25},
-    "attack2": {"speed": 0, "animation_speed": 0.25},
-    "attack1_no_move": {"speed": 0, "animation_speed": 0.25},
-    "attack2_no_move": {"speed": 0, "animation_speed": 0.25},
-    "attack_combo": {"speed": 0, "animation_speed": 0.25},       # 콤보 속도 조정
+    "attack1": {"speed": 0, "animation_speed": 0.23},
+    "attack2": {"speed": 0, "animation_speed": 0.23},
+    "attack1_no_move": {"speed": 0, "animation_speed": 0.23},
+    "attack2_no_move": {"speed": 0, "animation_speed": 0.23},
+    "attack_combo": {"speed": 0, "animation_speed": 0.25},       # 콤보 기본 속도
     "attack_combo_no_move": {"speed": 0, "animation_speed": 0.25},
 }
 
@@ -106,10 +107,10 @@ class Player:
         self.hit_count = 0           
         self.combo_timer = 0         
         
-        # 🌟 다단히트 제어용 플래그 변경
-        self.has_hit_first = False   # 콤보 1타 적중 여부
-        self.has_hit_second = False  # 콤보 2타 적중 여부
-        self.has_hit_normal = False  # 일반 공격 적중 여부
+        # 다단히트 제어용 플래그
+        self.has_hit_first = False   
+        self.has_hit_second = False  
+        self.has_hit_normal = False  
 
         # 플레이어 스탯
         self.max_hp = 100
@@ -126,7 +127,6 @@ class Player:
         if self.current_state != new_state:
             self.current_state = new_state
             self.frame_index = 0
-            # 🌟 상태가 바뀔 때 모든 타격 플래그를 초기화합니다.
             if "attack" in new_state:
                 self.has_hit_first = False
                 self.has_hit_second = False
@@ -175,21 +175,26 @@ class Player:
                 else:
                     self.change_state("idle")
 
-        # 캐릭터 프레임 진행
+        # --- 애니메이션 프레임 진행 및 공속 가속 핸들링 ---
         current_frames = animations[self.current_state]
-        animation_speed = state_data[self.current_state]["animation_speed"]
-        self.frame_index += animation_speed
+        base_anim_speed = state_data[self.current_state]["animation_speed"]
+        
+        # 🌟 콤보 버프 상태(combo_timer > 0)일 때 공격 속도를 1.6배 가속시킵니다.
+        if self.combo_timer > 0 and self.is_attacking():
+            final_anim_speed = base_anim_speed * 1.6
+        else:
+            final_anim_speed = base_anim_speed
 
-        # 🌟 공격 종류별 정밀 타격 판정 로직
+        self.frame_index += final_anim_speed
+
+        # 공격 종류별 정밀 타격 판정 로직
         if self.is_attacking():
             current_frame_int = int(self.frame_index)
             total_frames = len(current_frames)
 
             if "combo" in self.current_state:
-                # [콤보 공격 분기]: 1타와 2타가 연달아 나가는 애니메이션
-                # 전체 프레임의 25% 지점을 1타 타격 타이밍으로 잡음
+                # 콤보 다단히트 프레임 타이밍 계산
                 first_hit_frame = total_frames // 4
-                # 전체 프레임의 70% 지점을 2타 타격 타이밍으로 잡음
                 second_hit_frame = int(total_frames * 0.7)
 
                 # 1타 판정 체크
@@ -202,7 +207,7 @@ class Player:
                     self.has_hit_second = True
                     self.check_attack_collision(enemies, is_combo_hit=True)
             else:
-                # [일반 공격 분기]: 단발성이므로 중간 프레임에서 1번만 체크
+                # 일반 공격 분기 (중간 프레임)
                 normal_hit_frame = total_frames // 2
                 if current_frame_int == normal_hit_frame and not self.has_hit_normal:
                     self.has_hit_normal = True
@@ -249,11 +254,10 @@ class Player:
 
         for enemy in enemies:
             if attack_rect.colliderect(enemy.rect):
-                # 🌟 데미지 적용 (콤보 버프 중에는 데미지가 각각 들어감!)
-                self.current_hp = max(0, self.current_hp - 8)
+                # 오직 적(보스)의 HP만 감소 (플레이어 피격 버그 수정 반영 유지)
                 self.boss_current_hp = max(0, self.boss_current_hp - 10)
                 
-                # 콤보 활성화 스택 누적 로직 (버프가 꺼져있을 때 일반 공격 적중 시에만 스택 증가)
+                # 콤보 활성화 스택 누적 로직 (버프 오프 상태일 때만 축적)
                 if not is_combo_hit and self.combo_timer <= 0:
                     self.hit_count += 1
                     if self.hit_count >= 5:
@@ -273,7 +277,7 @@ class Player:
         screen.blit(current_image, image_rect)
 
     # ----------------------------
-    # 🌟 UI 그리기 함수 (보스 체력바 중앙 하단 배치)
+    # UI 그리기 함수
     # ----------------------------
     def draw_vector_ui(self, screen):
         start_x = 20
@@ -281,7 +285,6 @@ class Player:
         bar_width = 220
         bar_height = 14
 
-        # 플레이어 UI 배경 패널
         bg_panel = pygame.Surface((250, 65), pygame.SRCALPHA)
         bg_panel.fill((0, 0, 0, 140))
         screen.blit(bg_panel, (start_x - 5, start_y - 5))
@@ -315,26 +318,22 @@ class Player:
         pygame.draw.rect(screen, (180, 180, 180), (start_x, mp_y, bar_width, bar_height - 2), 1)
 
 
-        # --- [3] 🌟 보스 체력 바 (위치 변경: 중앙 하단) ---
-        boss_bar_w = 500              # 하단 배치 가독성을 위해 가로 폭을 살짝 늘림
+        # --- [3] 보스 체력 바 (중앙 하단 유지) ---
+        boss_bar_w = 500              
         boss_bar_h = 14
         boss_x = (WIDTH // 2) - (boss_bar_w // 2)
-        boss_y = HEIGHT - 40          # 화면 최하단(600)에서 40픽셀 위로 띄움
+        boss_y = HEIGHT - 40          
 
         boss_ratio = self.boss_current_hp / self.boss_max_hp
         
-        # 보스 하단 패널 배경
         boss_panel = pygame.Surface((boss_bar_w + 20, boss_bar_h + 10), pygame.SRCALPHA)
-        boss_panel.fill((0, 0, 0, 160)) # 조금 더 짙은 투명감
+        boss_panel.fill((0, 0, 0, 160)) 
         screen.blit(boss_panel, (boss_x - 10, boss_y - 5))
 
-        # 보스 체력 바 슬롯
         pygame.draw.rect(screen, (30, 30, 30), (boss_x, boss_y, boss_bar_w, boss_bar_h))
         if boss_ratio > 0:
-            # 묵직한 보스 전용 그린 레이아웃
             pygame.draw.rect(screen, (39, 174, 96), (boss_x, boss_y, int(boss_bar_w * boss_ratio), boss_bar_h))
-        # 테두리 라인
-        pygame.draw.rect(screen, (241, 196, 15), (boss_x, boss_y, boss_bar_w, boss_bar_h), 1) # 보스다운 황금색 테두리 포인트
+        pygame.draw.rect(screen, (241, 196, 15), (boss_x, boss_y, boss_bar_w, boss_bar_h), 1) 
 
 
 # --------------------------------
